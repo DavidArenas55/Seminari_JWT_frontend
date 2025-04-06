@@ -28,5 +28,10 @@ export class AuthService {
   logout(): void {
     localStorage.removeItem('access_token');
   }
+
+  refreshToken(): Observable<any> {
+    return this.http.post(`${this.apiUrl}/refresh`, {}, { withCredentials: true });
+  }
+  
 }
 

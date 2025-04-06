@@ -1,37 +1,56 @@
 import { HttpEvent, HttpHandlerFn, HttpRequest } from '@angular/common/http';
-import { inject, EventEmitter, Output } from '@angular/core';
+import { inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { ToastrService } from 'ngx-toastr';
-import { Observable, catchError, throwError } from 'rxjs';
-import { AppComponent } from '../app.component';
+import { Observable, catchError, throwError, switchMap, of } from 'rxjs';
+import { AuthService } from '../services/auth.service';
 
 export function jwtInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn): Observable<HttpEvent<unknown>> {
-  
-  console.log("Dentro del interceptador");
-
   const token = localStorage.getItem('access_token');
   const router = inject(Router);
   const toastr = inject(ToastrService);
+  const authService = inject(AuthService);
 
+  let clonedReq = req;
   if (token) {
-    req = req.clone({
+    clonedReq = req.clone({
       setHeaders: {
         Authorization: `Bearer ${token}`
       }
     });
   }
 
-  return next(req).pipe(
+  return next(clonedReq).pipe(
     catchError((error) => {
       if (error.status === 401) {
-        localStorage.removeItem('access_token'); // Neteja token si no és vàlid
-        toastr.error(
-          'Su sesión ha expirado. Por favor, inicie sesión nuevamente.',
-          'Sesión Expirada',
-          {
-            timeOut: 3000,
-            closeButton: true
-          }
+        console.warn('Token expirado. Intentando refrescar...');
+
+        return authService.refreshToken().pipe(
+          switchMap((response) => {
+            const newToken = response.token;
+            if (newToken) {
+              localStorage.setItem('access_token', newToken);
+              // Repetimos la petición original con el nuevo token
+              const retryReq = req.clone({
+                setHeaders: {
+                  Authorization: `Bearer ${newToken}`
+                }
+              });
+              return next(retryReq);
+            } else {
+              throw error;
+            }
+          }),
+          catchError((refreshError) => {
+            localStorage.removeItem('access_token');
+            toastr.error(
+              'Su sesión ha expirado. Por favor, inicie sesión nuevamente.',
+              'Sesión Expirada',
+              { timeOut: 3000, closeButton: true }
+            );
+            router.navigate(['/login']);
+            return throwError(() => refreshError);
+          })
         );
       }
       return throwError(() => error);
